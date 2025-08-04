@@ -3,8 +3,7 @@ const { createClient } = require('@supabase/supabase-js');
 
 // Configuration
 const SUPABASE_URL = 'https://jcbbuiowjrwteafkruio.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpjYmJ1aW93anJ3dGVhZmtydWlvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQxMzc2NDgsImV4cCI6MjA2OTcxMzY0OH0.zL6WYyXIZXSi-GmM2wa58lzaJHuc1vrvuelrgHKTr7g';
-
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Configuration des tables
