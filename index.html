@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Assistant Léo IA</title>
+</head>
+<body>
+<h2>Assistant Léo IA</h2>
+
+<input id="userInput" placeholder="Posez votre question...">
+<button onclick="envoyer()">Envoyer</button>
+
+<div id="result" style="margin-top:20px;color:blue;"></div>
+
+<script>
+async function envoyer() {
+  const userMessage = document.getElementById("userInput").value;
+  document.getElementById("result").innerText = "⏳ Analyse en cours...";
+
+  try {
+    const response = await fetch("/.netlify/functions/openai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: userMessage })
+    });
+
+    const data = await response.json();
+    document.getElementById("result").innerText = data.reply;
+  } catch (error) {
+    document.getElementById("result").innerText = "❌ Erreur : " + error.message;
+  }
+}
+</script>
+</body>
+</html>
