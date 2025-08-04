@@ -1,0 +1,8 @@
+{
+  "name": "leonetlify",
+  "version": "1.0.0",
+  "description": "Assistant IA avec fonctions Netlify",
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  }
+}
