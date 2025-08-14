@@ -1,7 +1,6 @@
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 
-// Variables d'environnement
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
@@ -26,55 +25,47 @@ exports.handler = async (event) => {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Question requise' }) };
     }
     
-    // 1. Recherche dans Supabase avec extraction intelligente de la ville
+    // 1. Recherche améliorée dans Supabase
     let supabaseData = [];
-    let city = '';
-    
     try {
-      // Extraction avancée du nom de ville (supporte les noms composés)
-      const cityMatch = question.match(/(?:à|in|at|near|près de|nearby)\s+([\w\s-]+)/i);
-      city = cityMatch ? cityMatch[1].trim() : '';
+      // Extraction avancée du lieu
+      const cityMatch = question.match(/(?:à|in|at|near|près de|nearby|dans|à)\s+([^.!?]+)/i);
+      let city = cityMatch ? cityMatch[1].trim() : question;
+      city = city.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "");  // Nettoyage
       
-      let query = supabase
+      console.log("Recherche Supabase pour:", city);
+      
+      // Requête étendue (nom ET ville)
+      const { data, error } = await supabase
         .from('coworking')
-        .select('name, visit, date');
+        .select('name,visit,date')
+        .or(`visit.ilike.%${city}%,name.ilike.%${city}%`)
+        .limit(5);
       
-      if (city) {
-        // Recherche insensible à la casse et avec similarité
-        query = query.ilike('visit', `%${city}%`);
-      }
+      if (error) console.error('Erreur Supabase:', error.message);
+      if (data) supabaseData = data;
       
-      const { data, error } = await query.limit(5);  // Augmenté à 5 résultats
-      
-      if (error) {
-        console.error('Supabase error:', error.message);
-      } else if (data && data.length > 0) {
-        supabaseData = data;
-      }
     } catch (supabaseError) {
-      console.error('Supabase processing error:', supabaseError);
+      console.error('Erreur Supabase:', supabaseError);
     }
 
-    // 2. Si Supabase a des résultats
+    // 2. Si résultats dans Supabase
     if (supabaseData.length > 0) {
-      // Formatage des données pour OpenAI
+      console.log("Résultats trouvés dans Supabase:", supabaseData.length);
       const supabaseInfo = supabaseData.map((item, i) => 
-        `${i+1}. ${item.name} (${item.visit}) - ${item.date || 'Prix non spécifié'}`
+        `${i+1}. ${item.name} (${item.visit}) - ${item.date || 'Prix sur demande'}`
       ).join('\n');
       
-      const prompt = `En tant qu'expert mondial en coworkings, réponds à cette question en utilisant 
-les données suivantes provenant de notre base de données. Sois précis et utile.
+      const prompt = `L'utilisateur cherche: "${question}". 
+      Voici des coworkings correspondants de notre base:
 
-Question: "${question}"
+      ${supabaseInfo}
 
-Données de notre base:
-${supabaseInfo}
-
-Réponds en français en structurant ta réponse:
-- Commence par "🏢 D'après notre base de coworkings:"
-- Liste les résultats les plus pertinents
-- Ajoute des conseils personnalisés si pertinent
-- Termine par "💡 Conseil: [un conseil pratique]"`;
+      Réponds en français avec:
+      - Un titre "🏢 Coworkings trouvés dans notre base:"
+      - Liste les 3 meilleurs résultats avec leurs caractéristiques
+      - Termine par un conseil personnalisé
+      Format: liste à puces, max 120 mots`;
       
       const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -87,75 +78,48 @@ Réponds en français en structurant ta réponse:
           messages: [
             { 
               role: 'system', 
-              content: 'Tu es Léo, expert international en solutions de coworking. Tu travailles pour une plateforme mondiale de réservation de coworkings. Tes réponses sont professionnelles, précises et basées sur les données fournies.'
+              content: 'Tu es Léo, expert en coworkings. Tes réponses sont concises, utiles et basées exclusivement sur les données fournies.'
             },
             { role: 'user', content: prompt }
           ],
-          max_tokens: 600,
-          temperature: 0.5
+          max_tokens: 400,
+          temperature: 0.3
         })
       });
       
       const aiData = await aiRes.json();
-      const reply = aiData.choices?.[0]?.message?.content || 'Je ne trouve pas de réponse dans notre base.';
+      const reply = aiData.choices?.[0]?.message?.content || 'Je ne trouve pas de réponse.';
       return { statusCode: 200, headers, body: JSON.stringify({ reponse: reply }) };
     }
     
-    // 3. Fallback - Recherche internet pour résultats internationaux
-    try {
-      const apiUrl = `https://serpapi.com/search?api_key=${SERPAPI_KEY}&engine=google&q=${encodeURIComponent(question)}&hl=fr&gl=fr`;
-      const apiResponse = await fetch(apiUrl);
-      const searchData = await apiResponse.json();
-      
-      let internetResults = "🌍 Voici ce que j'ai trouvé sur internet :\n\n";
-      
-      if (searchData.organic_results && searchData.organic_results.length > 0) {
-        // Filtre pour résultats pertinents (évite les annonces)
-        const relevantResults = searchData.organic_results
-          .filter(result => 
-            result.title.toLowerCase().includes('coworking') || 
-            result.title.toLowerCase().includes('espace') ||
-            result.snippet?.toLowerCase().includes('coworking')
-          )
-          .slice(0, 5);
-        
-        if (relevantResults.length > 0) {
-          relevantResults.forEach((result, idx) => {
-            internetResults += `${idx + 1}. **${result.title}**\n`;
-            internetResults += `   ${result.link}\n`;
-            if (result.snippet) internetResults += `   ${result.snippet}\n`;
-            internetResults += '\n';
-          });
-        } else {
-          internetResults = "Je n'ai trouvé aucun résultat pertinent sur internet pour cette recherche.";
-        }
-      } else {
-        internetResults = "Je n'ai trouvé aucun résultat sur internet pour cette recherche.";
-      }
-      
-      // Ajout d'une note sur les futures mises à jour
-      internetResults += "\nℹ️ Notre base de coworkings s'enrichit quotidiennement. Ce lieu sera bientôt disponible!";
-      
-      return { statusCode: 200, headers, body: JSON.stringify({ reponse: internetResults }) };
-    } catch (internetError) {
-      console.error('Erreur recherche internet:', internetError);
-      return { 
-        statusCode: 200, 
-        headers, 
-        body: JSON.stringify({ 
-          reponse: "Je n'ai pas pu accéder à internet pour cette recherche internationale. Notre équipe ajoute constamment de nouveaux coworkings à notre base!" 
-        }) 
-      };
+    // 3. Fallback - Recherche internet
+    console.log("Aucun résultat dans Supabase, recherche internet...");
+    const apiUrl = `https://serpapi.com/search?api_key=${SERPAPI_KEY}&engine=google&q=${encodeURIComponent(question)}&hl=fr&gl=fr`;
+    const apiResponse = await fetch(apiUrl);
+    const searchData = await apiResponse.json();
+    
+    let internetResults = "🌍 Voici ce que j'ai trouvé sur internet :\n\n";
+    
+    if (searchData.organic_results?.length > 0) {
+      searchData.organic_results.slice(0, 3).forEach((result, idx) => {
+        internetResults += `${idx + 1}. **${result.title}**\n`;
+        internetResults += `   ${result.link}\n`;
+        if (result.snippet) internetResults += `   ${result.snippet}\n`;
+        internetResults += '\n';
+      });
+      internetResults += "\n💡 Conseil: Ces résultats viennent de sources externes.";
+    } else {
+      internetResults = "Je n'ai trouvé aucun résultat pertinent sur internet.";
     }
+    
+    return { statusCode: 200, headers, body: JSON.stringify({ reponse: internetResults }) };
     
   } catch (err) {
     console.error('Erreur globale:', err);
     return { 
       statusCode: 500, 
       headers, 
-      body: JSON.stringify({ 
-        error: 'Erreur interne: ' + err.message 
-      }) 
+      body: JSON.stringify({ error: 'Erreur interne: ' + err.message }) 
     };
   }
 };
