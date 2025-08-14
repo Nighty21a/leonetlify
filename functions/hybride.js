@@ -68,7 +68,15 @@ exports.handler = async (event) => {
     
     console.log("Question reçue:", question);
     
-    // 1. Extraction et normalisation de la ville
+    // 1. Extraction du nombre demandé
+    let nombreDemande = 5; // Par défaut
+    const nombreMatch = question.match(/(\d+)/);
+    if (nombreMatch) {
+      nombreDemande = Math.min(parseInt(nombreMatch[1]), 10); // Maximum 10
+      console.log("Nombre demandé:", nombreDemande);
+    }
+    
+    // 2. Extraction et normalisation de la ville
     const patterns = [
       /(?:coworking|espace|bureau|travail).*?(?:à|in|at|near|près de|nearby|dans)\s+([^.!?,:;]+)/i,
       /(?:à|in|at|near|près de|nearby|dans)\s+([^.!?,:;]+).*?(?:coworking|espace|bureau|travail)/i,
@@ -95,23 +103,38 @@ exports.handler = async (event) => {
     
     console.log("Ville extraite:", villeBrute, "→ Normalisée:", villeNormalisee);
     
-    // 2. Recherche dans Firebase Firestore
+    // 3. Détection du type de recherche
+    const isCoworking = /coworking|espace|bureau|travail/i.test(question);
+    const isActivite = /trucs?|activité|voir|faire|visiter|restaurant|musée|attraction|château|bar|temple|guinness|activités/i.test(question);
+    
+    let collectionName = 'coworking'; // Par défaut
+    let searchQuery = `coworking ${villeNormalisee || question}`;
+    
+    if (isActivite && !isCoworking) {
+      collectionName = 'activites'; // Nouvelle collection
+      searchQuery = `activités choses à faire ${villeNormalisee || question}`;
+      console.log("Recherche d'activités détectée");
+    } else {
+      console.log("Recherche de coworkings détectée");
+    }
+    
+    // 4. Recherche dans Firebase Firestore
     let firebaseData = [];
     let firebaseSuccess = false;
     
     if (villeNormalisee && villeNormalisee.length > 2) {
       try {
-        console.log("Recherche Firebase pour:", villeNormalisee);
+        console.log("Recherche Firebase pour:", villeNormalisee, "dans", collectionName);
         
-        // Référence à la collection coworking
-        const coworkingRef = collection(db, 'coworking');
+        // Référence à la collection (coworking ou activites)
+        const collectionRef = collection(db, collectionName);
         
         // Requête 1 : Recherche exacte dans le champ 'visit'
         try {
           const q1 = query(
-            coworkingRef, 
+            collectionRef, 
             where('visit', '==', villeNormalisee),
-            limit(5)
+            limit(nombreDemande + 2)
           );
           const querySnapshot1 = await getDocs(q1);
           
@@ -127,7 +150,7 @@ exports.handler = async (event) => {
         // Requête 2 : Si pas de résultats, recherche plus large
         if (firebaseData.length === 0) {
           try {
-            const q2 = query(coworkingRef, limit(10));
+            const q2 = query(collectionRef, limit(nombreDemande + 5));
             const querySnapshot2 = await getDocs(q2);
             
             querySnapshot2.forEach((doc) => {
@@ -157,26 +180,25 @@ exports.handler = async (event) => {
       console.log("Ville non détectée ou trop courte pour Firebase");
     }
 
-    // 3. Logique hybride : Firebase + Internet pour 5 résultats max
+    // 5. Logique hybride : Firebase + Internet pour le nombre demandé
     let finalResults = [];
     let firebaseCount = 0;
     let internetCount = 0;
-    const MAX_RESULTS = 5;
+    const MAX_RESULTS = nombreDemande;
     
-    // Étape 3a : Ajouter les résultats Firebase
+    // Étape 5a : Ajouter les résultats Firebase
     if (firebaseSuccess && firebaseData.length > 0) {
       firebaseCount = Math.min(firebaseData.length, MAX_RESULTS);
       finalResults = firebaseData.slice(0, firebaseCount);
       console.log(`Ajout de ${firebaseCount} résultats Firebase`);
     }
     
-    // Étape 3b : Compléter avec Internet si besoin
+    // Étape 5b : Compléter avec Internet si besoin
     let internetData = [];
     if (finalResults.length < MAX_RESULTS) {
       internetCount = MAX_RESULTS - finalResults.length;
       console.log(`Recherche internet pour ${internetCount} résultats supplémentaires...`);
       
-      const searchQuery = `coworking ${villeNormalisee || question}`;
       const apiUrl = `https://serpapi.com/search?api_key=${SERPAPI_KEY}&engine=google&q=${encodeURIComponent(searchQuery)}&hl=fr&gl=fr`;
       
       try {
@@ -199,13 +221,14 @@ exports.handler = async (event) => {
       }
     }
     
-    // Étape 3c : Construire la réponse combinée
+    // Étape 5c : Construire la réponse combinée
     if (finalResults.length > 0 || internetData.length > 0) {
       let combinedReply = "";
       
       // Section Firebase
       if (finalResults.length > 0) {
-        combinedReply += "🏢 **Coworkings de notre base partenaire:**\n\n";
+        const titre = collectionName === 'activites' ? "🎯 **Activités de notre base partenaire:**" : "🏢 **Coworkings de notre base partenaire:**";
+        combinedReply += titre + "\n\n";
         finalResults.forEach((item, i) => {
           combinedReply += `${i+1}. **${item.name}**\n   📍 ${item.visit}\n   💰 ${item.date}\n   🔒 Partenaire exclusif\n\n`;
         });
@@ -213,7 +236,8 @@ exports.handler = async (event) => {
       
       // Section Internet
       if (internetData.length > 0) {
-        combinedReply += "🌍 **Coworkings trouvés sur internet:**\n\n";
+        const titreInternet = collectionName === 'activites' ? "🌍 **Activités trouvées sur internet:**" : "🌍 **Coworkings trouvés sur internet:**";
+        combinedReply += titreInternet + "\n\n";
         internetData.forEach((item, i) => {
           const num = finalResults.length + i + 1;
           combinedReply += `${num}. **${item.name}**\n   🔗 [Voir le site](${item.link})\n   📝 ${item.snippet ? item.snippet.substring(0, 100) + '...' : 'Plus d\'infos sur le site'}\n\n`;
@@ -221,18 +245,21 @@ exports.handler = async (event) => {
       }
       
       // Footer avec statistiques
-      combinedReply += `📊 **Résultats**: ${finalResults.length} partenaire(s) + ${internetData.length} internet = ${finalResults.length + internetData.length} total\n`;
+      const typeResultat = collectionName === 'activites' ? 'activité(s)' : 'coworking(s)';
+      combinedReply += `📊 **Résultats**: ${finalResults.length} ${typeResultat} partenaire(s) + ${internetData.length} internet = ${finalResults.length + internetData.length} total\n`;
+      combinedReply += `🔥 **Demandé**: ${nombreDemande} résultat(s) | **Source**: Firebase + Internet\n`;
       combinedReply += "💡 Notre base grandit chaque jour avec de nouveaux partenaires !";
       
       return { statusCode: 200, headers, body: JSON.stringify({ reponse: combinedReply }) };
     }
     
-    // 4. Si aucun résultat trouvé
+    // 6. Si aucun résultat trouvé
+    const typeRecherche = collectionName === 'activites' ? 'activités' : 'coworkings';
     return { 
       statusCode: 200, 
       headers, 
       body: JSON.stringify({ 
-        reponse: "❌ Aucun coworking trouvé pour cette recherche. Essayez avec une autre ville ou ajoutez plus de données à notre base !" 
+        reponse: `❌ Aucun ${typeRecherche} trouvé pour cette recherche. Essayez avec une autre ville ou ajoutez plus de données à notre base !` 
       }) 
     };
     
