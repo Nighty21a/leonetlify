@@ -4,8 +4,8 @@ const { createClient } = require('@supabase/supabase-js');
 
 /* ========= ENV ========= */
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;        // anon/public OK si RLS autorise SELECT
-const SERPAPI_KEY   = process.env.SERPAPI_KEY;
+const SUPABASE_KEY = process.env.SUPABASE_KEY; // anon/public key OK si RLS SELECT autorisée
+const SERPAPI_KEY  = process.env.SERPAPI_KEY;
 
 /* ========= CLIENT DB ========= */
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -14,52 +14,39 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 });
 
 /* ========= UTIL ========= */
-// Normalise quelques variantes courantes vers la forme stockée en DB (français)
 const CITY_MAP = {
-  'paris': 'Paris',
-  'lyon': 'Lyon',
-  'marseille': 'Marseille',
-  'lille': 'Lille',
-  'bordeaux': 'Bordeaux',
-  'nice': 'Nice',
-  'nantes': 'Nantes',
-  'strasbourg': 'Strasbourg',
-  'london': 'Londres',
-  'londres': 'Londres',
-  'new york': 'New York',
-  'ny': 'New York',
-  'berlin': 'Berlin',
-  'madrid': 'Madrid',
-  'barcelona': 'Barcelone',
-  'barcelone': 'Barcelone',
-  'rome': 'Rome',
-  'tokyo': 'Tokyo',
-  'singapore': 'Singapour',
-  'singapour': 'Singapour',
+  // FR
+  'paris':'Paris','lyon':'Lyon','marseille':'Marseille','lille':'Lille','bordeaux':'Bordeaux',
+  'nice':'Nice','nantes':'Nantes','strasbourg':'Strasbourg',
+  // EN↔FR courants
+  'london':'Londres','londres':'Londres',
+  'new york':'New York','ny':'New York',
+  'barcelona':'Barcelone','barcelone':'Barcelone',
+  'singapore':'Singapour','singapour':'Singapour',
+  'rome':'Rome','berlin':'Berlin','madrid':'Madrid','tokyo':'Tokyo'
 };
+
+function normalizeCity(input) {
+  if (!input) return '';
+  const lower = input.toLowerCase().trim()
+    .replace(/[^\p{L}\p{N}\s-]/gu,' ')
+    .replace(/\s+/g,' ');
+  return CITY_MAP[lower] || lower.replace(/\b\w/g, c => c.toUpperCase());
+}
 
 function extractCity(q) {
   if (!q) return '';
-  const raw = (q || '').toLowerCase().trim();
-
-  // on prend ce qui suit "à|in|dans|en"
-  const m = raw.match(/(?:\bà|\bin|\bdans|\ben)\s+([^,.;!?]+)/i);
-  const candidate = (m ? m[1] : raw)
-    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // si la ville contient plusieurs mots, on garde tout (ex: "new york")
-  const norm = CITY_MAP[candidate] || CITY_MAP[candidate.normalize('NFD').replace(/[\u0300-\u036f]/g,'')] || candidate;
-  return norm;
+  const m = q.toLowerCase().match(/(?:\bà|\bin|\bdans|\ben)\s+([^,.;!?]+)/i);
+  const raw = (m ? m[1] : q).trim();
+  return normalizeCity(raw);
 }
 
 function formatDbAnswer(rows, villeAffichee) {
   const lines = rows.map((it, i) => {
-    const prix = (it.prix != null && it.prix !== '') ? `${it.prix} €` : 'Prix sur demande';
-    const adresse = it.adresse || 'Adresse disponible';
-    const ville = it.ville || villeAffichee || 'Localisation';
     const nom = it.nom || it.name || 'Espace de coworking';
+    const ville = it.ville || villeAffichee || 'Localisation';
+    const adresse = it.adresse || 'Adresse disponible';
+    const prix = (it.prix != null && it.prix !== '') ? `${it.prix} €` : 'Prix sur demande';
     return `${i+1}. **${nom}** — ${ville}\n   📍 ${adresse}\n   💰 ${prix}`;
   }).join('\n\n');
 
@@ -85,41 +72,41 @@ exports.handler = async (event) => {
     if (!ville) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Ville introuvable dans la requête' }) };
     }
-    console.log('🔎 Ville extraite =', ville);
+    console.log('🔎 Ville =', ville);
 
-    /* ====== ETAPE 1 : SUPABASE D’ABORD ====== */
+    /* ====== 1) SUPABASE D’ABORD ====== */
     try {
       const { data, error } = await supabase
         .from('coworking')
         .select('id, nom, ville, pays, prix, adresse, description')
-        // on cherche d'abord par "ville", mais on accepte aussi une occurrence dans "nom"
+        // on matche la ville et, au besoin, le nom contient la ville
         .or(`ville.ilike.%${ville}%,nom.ilike.%${ville}%`)
         .limit(8);
 
       if (error) {
-        console.error('❌ Supabase error:', error);
+        console.error('❌ Supabase:', error);
         throw error;
       }
 
       if (Array.isArray(data) && data.length > 0) {
-        console.log(`✅ DB hits: ${data.length}`);
+        console.log(`✅ DB: ${data.length} résultats`);
         return {
           statusCode: 200,
           headers,
           body: JSON.stringify({
             reponse: formatDbAnswer(data, ville),
             source: 'database',
-            count: data.length,
+            count: data.length
           })
         };
       } else {
-        console.log('ℹ️ DB: aucun résultat, on passe au web');
+        console.log('ℹ️ DB: aucun résultat → fallback web');
       }
     } catch (e) {
       console.error('⚠️ DB indisponible, fallback web. Détail:', e?.message || e);
     }
 
-    /* ====== ETAPE 2 : INTERNET (fallback) ====== */
+    /* ====== 2) INTERNET (fallback) ====== */
     try {
       const query = `coworking ${ville}`;
       const url = `https://serpapi.com/search.json?engine=google&q=${encodeURIComponent(query)}&num=5&hl=fr&gl=fr&api_key=${SERPAPI_KEY}`;
@@ -145,23 +132,21 @@ exports.handler = async (event) => {
         };
       }
     } catch (e) {
-      console.error('❌ Web search error:', e?.message || e);
+      console.error('❌ Web search:', e?.message || e);
     }
 
-    /* ====== ETAPE 3 : FALLBACK FINAL ====== */
+    /* ====== 3) FALLBACK FINAL ====== */
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
-        reponse:
-`Désolé, je n’ai rien trouvé pour **${ville}** pour le moment.
-💡 Essayez une autre formulation (ex. “Trouve 3 coworkings à ${ville} centre”).`,
+        reponse: `Désolé, je n’ai rien trouvé pour **${ville}** pour le moment.\n💡 Essayez une autre formulation (ex. “Trouve 3 coworkings à ${ville} centre”).`,
         source: 'fallback'
       })
     };
 
   } catch (err) {
-    console.error('❌ Handler error:', err);
+    console.error('❌ Handler:', err);
     return { statusCode: 500, headers, body: JSON.stringify({ error: err.message }) };
   }
 };
