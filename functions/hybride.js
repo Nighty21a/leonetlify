@@ -206,7 +206,7 @@ exports.handler = async (event) => {
     
     // 3. Détection du type de recherche
     const isCoworking = /coworking|espace|bureau|travail/i.test(question);
-    const isActivite = /trucs?|activité|activités|voir|faire|visiter|restaurant|musée|attraction|château|bar|temple|guinness|choses|que faire|à faire/i.test(question);
+    const isActivite = /trucs|activité|activités|loisirs|occupations|sorties|divertissements|animations|passe-temps|jeux|attractions|événements|spectacles|choses à voir|choses à faire|expériences|excursions|visites|circuits|balades|découvertes|explorations|promenades|randonnées|itinéraires|expositions|musées|ateliers|manifestations|festivals|représentations|concerts|projections|conférences|sports|loisirs sportifs|activités physiques|aventures|challenges|parcours|activités nautiques|sports extrêmes|expériences nature|séances d’entraînement|que faire|idées de sorties|bons plans|activités proposées|expériences à vivre|lieux à visiter|moments à partager|escapades|idées d’activités|choses à découvrir/i.test(question);
     
     let typeRecherche = 'coworking';
     let searchQuery = `coworking ${villeNormalisee || question}`;
