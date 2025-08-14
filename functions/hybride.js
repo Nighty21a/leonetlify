@@ -157,102 +157,84 @@ exports.handler = async (event) => {
       console.log("Ville non détectée ou trop courte pour Firebase");
     }
 
-    // 3. Si Firebase a des résultats
+    // 3. Logique hybride : Firebase + Internet pour 5 résultats max
+    let finalResults = [];
+    let firebaseCount = 0;
+    let internetCount = 0;
+    const MAX_RESULTS = 5;
+    
+    // Étape 3a : Ajouter les résultats Firebase
     if (firebaseSuccess && firebaseData.length > 0) {
-      console.log("Génération de réponse depuis Firebase...");
+      firebaseCount = Math.min(firebaseData.length, MAX_RESULTS);
+      finalResults = firebaseData.slice(0, firebaseCount);
+      console.log(`Ajout de ${firebaseCount} résultats Firebase`);
+    }
+    
+    // Étape 3b : Compléter avec Internet si besoin
+    let internetData = [];
+    if (finalResults.length < MAX_RESULTS) {
+      internetCount = MAX_RESULTS - finalResults.length;
+      console.log(`Recherche internet pour ${internetCount} résultats supplémentaires...`);
       
-      const firebaseInfo = firebaseData.slice(0, 5).map((item, i) => 
-        `${i+1}. **${item.name}** - ${item.visit || 'Adresse non spécifiée'} - ${item.date || 'Prix sur demande'}`
-      ).join('\n');
-      
-      const prompt = `L'utilisateur cherche: "${question}". 
-      Voici des coworkings de notre base exclusive Firebase:
-
-      ${firebaseInfo}
-
-      Réponds en français avec:
-      - Un titre "🏢 Coworkings trouvés dans notre base:"
-      - Liste les résultats avec leurs caractéristiques principales
-      - Mentionne que ce sont des partenaires exclusifs
-      Format: structuré avec puces, max 150 mots, ton professionnel`;
+      const searchQuery = `coworking ${villeNormalisee || question}`;
+      const apiUrl = `https://serpapi.com/search?api_key=${SERPAPI_KEY}&engine=google&q=${encodeURIComponent(searchQuery)}&hl=fr&gl=fr`;
       
       try {
-        const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${OPENAI_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: 'gpt-3.5-turbo',
-            messages: [
-              { 
-                role: 'system', 
-                content: 'Tu es Léo, expert en coworkings. Utilise exclusivement les données fournies. Sois précis et professionnel.'
-              },
-              { role: 'user', content: prompt }
-            ],
-            max_tokens: 500,
-            temperature: 0.2
-          })
-        });
+        const apiResponse = await fetch(apiUrl);
+        const searchData = await apiResponse.json();
         
-        const aiData = await aiRes.json();
-        let reply = aiData.choices?.[0]?.message?.content || 'Je ne trouve pas de réponse.';
-        
-        // Ajout du badge "Source: Notre base"
-        reply += "\n\n🔥 **Source**: Notre base Firebase de coworkings partenaires";
-        
-        return { statusCode: 200, headers, body: JSON.stringify({ reponse: reply }) };
-        
-      } catch (aiError) {
-        console.error("Erreur OpenAI:", aiError);
-        // Fallback sans IA
-        let manualReply = "🏢 **Coworkings trouvés dans notre base:**\n\n";
-        firebaseData.slice(0, 5).forEach((item, i) => {
-          manualReply += `${i+1}. **${item.name}**\n   📍 ${item.visit || 'Adresse non spécifiée'}\n   💰 ${item.date || 'Prix sur demande'}\n\n`;
-        });
-        manualReply += "🔥 **Source**: Notre base Firebase de coworkings partenaires";
-        
-        return { statusCode: 200, headers, body: JSON.stringify({ reponse: manualReply }) };
+        if (searchData.organic_results?.length > 0) {
+          internetData = searchData.organic_results.slice(0, internetCount).map(result => ({
+            name: result.title,
+            visit: villeNormalisee || 'Adresse web',
+            date: 'Voir site',
+            link: result.link,
+            snippet: result.snippet,
+            source: 'internet'
+          }));
+          console.log(`Trouvé ${internetData.length} résultats internet`);
+        }
+      } catch (internetError) {
+        console.log("Erreur recherche internet:", internetError.message);
       }
     }
     
-    // 4. Fallback - Recherche internet
-    console.log("Aucun résultat Firebase - Recherche internet...");
-    const searchQuery = `coworking ${villeNormalisee || question}`;
-    const apiUrl = `https://serpapi.com/search?api_key=${SERPAPI_KEY}&engine=google&q=${encodeURIComponent(searchQuery)}&hl=fr&gl=fr`;
-    
-    try {
-      const apiResponse = await fetch(apiUrl);
-      const searchData = await apiResponse.json();
+    // Étape 3c : Construire la réponse combinée
+    if (finalResults.length > 0 || internetData.length > 0) {
+      let combinedReply = "";
       
-      let internetResults = "🌍 **Coworkings trouvés sur internet :**\n\n";
-      
-      if (searchData.organic_results?.length > 0) {
-        searchData.organic_results.slice(0, 3).forEach((result, idx) => {
-          internetResults += `${idx + 1}. **${result.title}**\n`;
-          internetResults += `   🔗 ${result.link}\n`;
-          if (result.snippet) internetResults += `   📝 ${result.snippet}\n`;
-          internetResults += '\n';
+      // Section Firebase
+      if (finalResults.length > 0) {
+        combinedReply += "🏢 **Coworkings de notre base partenaire:**\n\n";
+        finalResults.forEach((item, i) => {
+          combinedReply += `${i+1}. **${item.name}**\n   📍 ${item.visit}\n   💰 ${item.date}\n   🔒 Partenaire exclusif\n\n`;
         });
-        internetResults += "\n💡 **Info**: Ces résultats viennent de sources externes. Notre base Firebase grandit chaque jour !";
-      } else {
-        internetResults = "❌ Aucun coworking trouvé pour cette recherche. Essayez avec une autre ville !";
       }
       
-      return { statusCode: 200, headers, body: JSON.stringify({ reponse: internetResults }) };
+      // Section Internet
+      if (internetData.length > 0) {
+        combinedReply += "🌍 **Coworkings trouvés sur internet:**\n\n";
+        internetData.forEach((item, i) => {
+          const num = finalResults.length + i + 1;
+          combinedReply += `${num}. **${item.name}**\n   🔗 [Voir le site](${item.link})\n   📝 ${item.snippet ? item.snippet.substring(0, 100) + '...' : 'Plus d\'infos sur le site'}\n\n`;
+        });
+      }
       
-    } catch (internetError) {
-      console.error('Erreur recherche internet:', internetError);
-      return { 
-        statusCode: 200, 
-        headers, 
-        body: JSON.stringify({ 
-          reponse: "❌ Impossible d'accéder aux données pour le moment. Notre équipe enrichit constamment notre base Firebase !" 
-        }) 
-      };
+      // Footer avec statistiques
+      combinedReply += `📊 **Résultats**: ${finalResults.length} partenaire(s) + ${internetData.length} internet = ${finalResults.length + internetData.length} total\n`;
+      combinedReply += "💡 Notre base grandit chaque jour avec de nouveaux partenaires !";
+      
+      return { statusCode: 200, headers, body: JSON.stringify({ reponse: combinedReply }) };
     }
+    
+    // 4. Si aucun résultat trouvé
+    return { 
+      statusCode: 200, 
+      headers, 
+      body: JSON.stringify({ 
+        reponse: "❌ Aucun coworking trouvé pour cette recherche. Essayez avec une autre ville ou ajoutez plus de données à notre base !" 
+      }) 
+    };
     
   } catch (err) {
     console.error('Erreur globale:', err);
