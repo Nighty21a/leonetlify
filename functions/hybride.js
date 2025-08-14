@@ -4,6 +4,7 @@
  * Version optimisée avec gestion d'erreurs robuste
  */
 
+
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 
