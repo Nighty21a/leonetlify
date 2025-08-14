@@ -1,18 +1,31 @@
 const fetch = require('node-fetch');
-const { createClient } = require('@supabase/supabase-js');
+const { initializeApp } = require('firebase/app');
+const { getFirestore, collection, query, where, getDocs, orderBy, limit } = require('firebase/firestore');
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
+// Configuration Firebase - REMPLACEZ PAR VOS VRAIES VALEURS
+const firebaseConfig = {
+  apiKey: "AIzaSyAgOGUu9kN1BNJ-NdsW08_ae1jDbWD1VBk",
+  authDomain: "worktripps.firebaseapp.com",
+  projectId: "worktripps",
+  storageBucket: "worktripps.firebasestorage.app",
+  messagingSenderId: "7411770073",
+  appId: "1:7411770073:web:6a80923c19200c136bdf38",
+  measurementId: "G-JY8XTFFE083"
+};
+
+// Variables d'environnement
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const SERPAPI_KEY = process.env.SERPAPI_KEY;
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// Initialisation Firebase
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
-// Dictionnaire de normalisation des noms de villes ÉLARGI
+// Dictionnaire de normalisation des villes
 const VILLE_NORMALISATION = {
   "londres": "london",
   "paris": "paris",
-  "tokyo": "tokyo", 
+  "tokyo": "tokyo",
   "dublin": "dublin",
   "new york": "new york",
   "berlin": "berlin",
@@ -36,25 +49,6 @@ const VILLE_NORMALISATION = {
   "montpellier": "montpellier"
 };
 
-// Fonction avec timeout pour les requêtes
-async function withTimeout(promise, ms, timeoutMessage) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(timeoutMessage));
-    }, ms);
-
-    promise
-      .then(value => {
-        clearTimeout(timer);
-        resolve(value);
-      })
-      .catch(reason => {
-        clearTimeout(timer);
-        reject(reason);
-      });
-  });
-}
-
 exports.handler = async (event) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -74,7 +68,7 @@ exports.handler = async (event) => {
     
     console.log("Question reçue:", question);
     
-    // 1. Extraction et normalisation AMÉLIORÉE de la ville
+    // 1. Extraction et normalisation de la ville
     const patterns = [
       /(?:coworking|espace|bureau|travail).*?(?:à|in|at|near|près de|nearby|dans)\s+([^.!?,:;]+)/i,
       /(?:à|in|at|near|près de|nearby|dans)\s+([^.!?,:;]+).*?(?:coworking|espace|bureau|travail)/i,
@@ -91,7 +85,7 @@ exports.handler = async (event) => {
       }
     }
     
-    // Nettoyage plus agressif
+    // Nettoyage de la ville
     villeBrute = villeBrute
       .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "")
       .replace(/\s+/g, " ")
@@ -101,91 +95,80 @@ exports.handler = async (event) => {
     
     console.log("Ville extraite:", villeBrute, "→ Normalisée:", villeNormalisee);
     
-    // 2. Recherche dans Supabase AMÉLIORÉE avec timeout de 8 secondes
-    let supabaseData = [];
-    let supabaseSuccess = false;
+    // 2. Recherche dans Firebase Firestore
+    let firebaseData = [];
+    let firebaseSuccess = false;
     
     if (villeNormalisee && villeNormalisee.length > 2) {
       try {
-        console.log("Tentative de connexion à Supabase...");
+        console.log("Recherche Firebase pour:", villeNormalisee);
         
-        // Test de connexion simple d'abord
-        const connectionTest = supabase
-          .from('coworking')
-          .select('count', { count: 'exact', head: true });
+        // Référence à la collection coworking
+        const coworkingRef = collection(db, 'coworking');
+        
+        // Requête 1 : Recherche exacte dans le champ 'visit'
+        try {
+          const q1 = query(
+            coworkingRef, 
+            where('visit', '==', villeNormalisee),
+            limit(5)
+          );
+          const querySnapshot1 = await getDocs(q1);
           
-        await withTimeout(connectionTest, 3000, "Test de connexion Supabase timeout");
-        console.log("Connexion Supabase OK");
-        
-        // Requête principale avec plusieurs stratégies
-        const searchQueries = [
-          // Recherche exacte sur le nom
-          supabase
-            .from('coworking')
-            .select('name, visit, date')
-            .ilike('name', `%${villeNormalisee}%`)
-            .limit(3),
+          querySnapshot1.forEach((doc) => {
+            firebaseData.push({ id: doc.id, ...doc.data() });
+          });
           
-          // Recherche dans le champ visit
-          supabase
-            .from('coworking')
-            .select('name, visit, date')
-            .ilike('visit', `%${villeNormalisee}%`)
-            .limit(3),
-            
-          // Recherche combinée
-          supabase
-            .from('coworking')
-            .select('name, visit, date')
-            .or(`name.ilike.%${villeNormalisee}%,visit.ilike.%${villeNormalisee}%`)
-            .limit(5)
-        ];
+          console.log("Résultats recherche exacte:", firebaseData.length);
+        } catch (error1) {
+          console.log("Erreur recherche exacte:", error1.message);
+        }
         
-        // Essayer les requêtes une par une
-        for (let i = 0; i < searchQueries.length; i++) {
+        // Requête 2 : Si pas de résultats, recherche plus large
+        if (firebaseData.length === 0) {
           try {
-            console.log(`Essai requête Supabase ${i + 1}...`);
-            const { data, error } = await withTimeout(
-              searchQueries[i], 
-              5000, 
-              `Requête Supabase ${i + 1} timeout`
-            );
+            const q2 = query(coworkingRef, limit(10));
+            const querySnapshot2 = await getDocs(q2);
             
-            if (error) {
-              console.error(`Erreur Supabase requête ${i + 1}:`, error);
-              continue;
-            }
+            querySnapshot2.forEach((doc) => {
+              const data = doc.data();
+              // Filtrage côté client pour recherche partielle
+              if (data.visit && data.visit.toLowerCase().includes(villeNormalisee) ||
+                  data.name && data.name.toLowerCase().includes(villeNormalisee)) {
+                firebaseData.push({ id: doc.id, ...data });
+              }
+            });
             
-            if (data && data.length > 0) {
-              supabaseData = data;
-              supabaseSuccess = true;
-              console.log(`Succès requête ${i + 1} - Résultats trouvés:`, data.length);
-              break;
-            }
-          } catch (queryError) {
-            console.log(`Erreur requête ${i + 1}:`, queryError.message);
+            console.log("Résultats recherche large:", firebaseData.length);
+          } catch (error2) {
+            console.log("Erreur recherche large:", error2.message);
           }
         }
         
-      } catch (supabaseError) {
-        console.error("Erreur générale Supabase:", supabaseError.message);
+        if (firebaseData.length > 0) {
+          firebaseSuccess = true;
+          console.log("Succès Firebase - Résultats trouvés:", firebaseData.length);
+        }
+        
+      } catch (firebaseError) {
+        console.error("Erreur générale Firebase:", firebaseError.message);
       }
     } else {
-      console.log("Ville non détectée ou trop courte pour Supabase");
+      console.log("Ville non détectée ou trop courte pour Firebase");
     }
 
-    // 3. Si Supabase a répondu avec des résultats
-    if (supabaseSuccess && supabaseData.length > 0) {
-      console.log("Génération de réponse depuis Supabase...");
+    // 3. Si Firebase a des résultats
+    if (firebaseSuccess && firebaseData.length > 0) {
+      console.log("Génération de réponse depuis Firebase...");
       
-      const supabaseInfo = supabaseData.map((item, i) => 
+      const firebaseInfo = firebaseData.slice(0, 5).map((item, i) => 
         `${i+1}. **${item.name}** - ${item.visit || 'Adresse non spécifiée'} - ${item.date || 'Prix sur demande'}`
       ).join('\n');
       
       const prompt = `L'utilisateur cherche: "${question}". 
-      Voici des coworkings de notre base exclusive:
+      Voici des coworkings de notre base exclusive Firebase:
 
-      ${supabaseInfo}
+      ${firebaseInfo}
 
       Réponds en français avec:
       - Un titre "🏢 Coworkings trouvés dans notre base:"
@@ -218,24 +201,25 @@ exports.handler = async (event) => {
         let reply = aiData.choices?.[0]?.message?.content || 'Je ne trouve pas de réponse.';
         
         // Ajout du badge "Source: Notre base"
-        reply += "\n\n🔒 **Source**: Notre base de coworkings partenaires exclusifs";
+        reply += "\n\n🔥 **Source**: Notre base Firebase de coworkings partenaires";
         
         return { statusCode: 200, headers, body: JSON.stringify({ reponse: reply }) };
+        
       } catch (aiError) {
         console.error("Erreur OpenAI:", aiError);
         // Fallback sans IA
         let manualReply = "🏢 **Coworkings trouvés dans notre base:**\n\n";
-        supabaseData.forEach((item, i) => {
+        firebaseData.slice(0, 5).forEach((item, i) => {
           manualReply += `${i+1}. **${item.name}**\n   📍 ${item.visit || 'Adresse non spécifiée'}\n   💰 ${item.date || 'Prix sur demande'}\n\n`;
         });
-        manualReply += "🔒 **Source**: Notre base de coworkings partenaires exclusifs";
+        manualReply += "🔥 **Source**: Notre base Firebase de coworkings partenaires";
         
         return { statusCode: 200, headers, body: JSON.stringify({ reponse: manualReply }) };
       }
     }
     
-    // 4. Fallback - Recherche internet (si pas de résultats Supabase)
-    console.log("Aucun résultat Supabase - Recherche internet...");
+    // 4. Fallback - Recherche internet
+    console.log("Aucun résultat Firebase - Recherche internet...");
     const searchQuery = `coworking ${villeNormalisee || question}`;
     const apiUrl = `https://serpapi.com/search?api_key=${SERPAPI_KEY}&engine=google&q=${encodeURIComponent(searchQuery)}&hl=fr&gl=fr`;
     
@@ -252,7 +236,7 @@ exports.handler = async (event) => {
           if (result.snippet) internetResults += `   📝 ${result.snippet}\n`;
           internetResults += '\n';
         });
-        internetResults += "\n💡 **Info**: Ces résultats viennent de sources externes. Notre base grandit chaque jour !";
+        internetResults += "\n💡 **Info**: Ces résultats viennent de sources externes. Notre base Firebase grandit chaque jour !";
       } else {
         internetResults = "❌ Aucun coworking trouvé pour cette recherche. Essayez avec une autre ville !";
       }
@@ -265,7 +249,7 @@ exports.handler = async (event) => {
         statusCode: 200, 
         headers, 
         body: JSON.stringify({ 
-          reponse: "❌ Impossible d'accéder aux données pour le moment. Notre équipe enrichit constamment notre base de coworkings !" 
+          reponse: "❌ Impossible d'accéder aux données pour le moment. Notre équipe enrichit constamment notre base Firebase !" 
         }) 
       };
     }
