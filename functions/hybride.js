@@ -2,7 +2,7 @@ const fetch = require('node-fetch');
 const { initializeApp } = require('firebase/app');
 const { getFirestore, collection, query, where, getDocs, orderBy, limit } = require('firebase/firestore');
 
-// Configuration Firebase - REMPLACEZ PAR VOS VRAIES VALEURS
+// Configuration Firebase
 const firebaseConfig = {
   apiKey: "AIzaSyAgOGUu9kN1BNJ-NdsW08_ae1jDbWD1VBk",
   authDomain: "worktripps.firebaseapp.com",
@@ -23,32 +23,139 @@ const db = getFirestore(app);
 
 // Dictionnaire de normalisation des villes
 const VILLE_NORMALISATION = {
-  "londres": "london",
-  "paris": "paris",
-  "tokyo": "tokyo",
-  "dublin": "dublin",
-  "new york": "new york",
-  "berlin": "berlin",
-  "rome": "rome",
-  "madrid": "madrid",
-  "barcelone": "barcelona",
-  "barcelona": "barcelona",
-  "amsterdam": "amsterdam",
-  "lisbonne": "lisbon",
-  "lisbon": "lisbon",
-  "milan": "milan",
-  "milano": "milan",
-  "lyon": "lyon",
-  "marseille": "marseille",
-  "nice": "nice",
-  "toulouse": "toulouse",
-  "bordeaux": "bordeaux",
-  "lille": "lille",
-  "nantes": "nantes",
-  "strasbourg": "strasbourg",
+  "londres": "london", "paris": "paris", "tokyo": "tokyo", "dublin": "dublin",
+  "new york": "new york", "berlin": "berlin", "rome": "rome", "madrid": "madrid",
+  "barcelone": "barcelona", "barcelona": "barcelona", "amsterdam": "amsterdam",
+  "lisbonne": "lisbon", "lisbon": "lisbon", "milan": "milan", "milano": "milan",
+  "lyon": "lyon", "marseille": "marseille", "nice": "nice", "toulouse": "toulouse",
+  "bordeaux": "bordeaux", "lille": "lille", "nantes": "nantes", "strasbourg": "strasbourg",
   "montpellier": "montpellier"
 };
 
+// ======================================
+// FONCTION RECHERCHE COWORKINGS
+// ======================================
+async function rechercheCoworkings(villeNormalisee, nombreDemande) {
+  console.log("🏢 RECHERCHE COWORKINGS pour:", villeNormalisee);
+  
+  let firebaseData = [];
+  let firebaseSuccess = false;
+  
+  if (villeNormalisee && villeNormalisee.length > 2) {
+    try {
+      const coworkingRef = collection(db, 'coworking');
+      const q = query(coworkingRef, limit(50));
+      const querySnapshot = await getDocs(q);
+      
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        const visitLower = data.visit ? data.visit.toLowerCase() : '';
+        const nameLower = data.name ? data.name.toLowerCase() : '';
+        
+        if (visitLower.includes(villeNormalisee.toLowerCase()) || 
+            nameLower.includes(villeNormalisee.toLowerCase()) ||
+            visitLower === villeNormalisee.toLowerCase()) {
+          firebaseData.push({ id: doc.id, ...data });
+        }
+      });
+      
+      firebaseData = firebaseData.slice(0, nombreDemande + 3);
+      
+      if (firebaseData.length > 0) {
+        firebaseSuccess = true;
+        console.log("✅ Coworkings Firebase trouvés:", firebaseData.length);
+      } else {
+        console.log("❌ Aucun coworking Firebase trouvé");
+      }
+      
+    } catch (error) {
+      console.error("Erreur Firebase coworkings:", error.message);
+    }
+  }
+  
+  return { firebaseData, firebaseSuccess };
+}
+
+// ======================================
+// FONCTION RECHERCHE ACTIVITÉS
+// ======================================
+async function rechercheActivites(villeNormalisee, nombreDemande) {
+  console.log("🎯 RECHERCHE ACTIVITÉS pour:", villeNormalisee);
+  
+  let firebaseData = [];
+  let firebaseSuccess = false;
+  
+  if (villeNormalisee && villeNormalisee.length > 2) {
+    try {
+      const activitesRef = collection(db, 'activites');
+      const q = query(activitesRef, limit(50));
+      const querySnapshot = await getDocs(q);
+      
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        const visitLower = data.visit ? data.visit.toLowerCase() : '';
+        const nameLower = data.name ? data.name.toLowerCase() : '';
+        
+        if (visitLower.includes(villeNormalisee.toLowerCase()) || 
+            nameLower.includes(villeNormalisee.toLowerCase()) ||
+            visitLower === villeNormalisee.toLowerCase()) {
+          firebaseData.push({ id: doc.id, ...data });
+        }
+      });
+      
+      firebaseData = firebaseData.slice(0, nombreDemande + 3);
+      
+      if (firebaseData.length > 0) {
+        firebaseSuccess = true;
+        console.log("✅ Activités Firebase trouvées:", firebaseData.length);
+      } else {
+        console.log("❌ Aucune activité Firebase trouvée");
+      }
+      
+    } catch (error) {
+      console.error("Erreur Firebase activités:", error.message);
+    }
+  }
+  
+  return { firebaseData, firebaseSuccess };
+}
+
+// ======================================
+// FONCTION RECHERCHE INTERNET
+// ======================================
+async function rechercheInternet(searchQuery, internetCount) {
+  console.log("🌍 RECHERCHE INTERNET pour:", searchQuery, "- Nombre:", internetCount);
+  
+  let internetData = [];
+  
+  try {
+    const apiUrl = `https://serpapi.com/search?api_key=${SERPAPI_KEY}&engine=google&q=${encodeURIComponent(searchQuery)}&hl=fr&gl=fr`;
+    const apiResponse = await fetch(apiUrl);
+    const searchData = await apiResponse.json();
+    
+    if (searchData.organic_results?.length > 0) {
+      internetData = searchData.organic_results.slice(0, internetCount).map(result => ({
+        name: result.title,
+        visit: 'Internet',
+        date: 'Voir site',
+        link: result.link,
+        snippet: result.snippet,
+        source: 'internet'
+      }));
+      console.log("✅ Résultats internet trouvés:", internetData.length);
+    } else {
+      console.log("❌ Aucun résultat internet");
+    }
+  } catch (error) {
+    console.log("Erreur recherche internet:", error.message);
+  }
+  
+  return internetData;
+}
+
+// ======================================
+// FONCTION PRINCIPALE
+// ======================================
 exports.handler = async (event) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -66,22 +173,21 @@ exports.handler = async (event) => {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Question requise' }) };
     }
     
-    console.log("Question reçue:", question);
+    console.log("📝 Question reçue:", question);
     
     // 1. Extraction du nombre demandé
-    let nombreDemande = 5; // Par défaut
+    let nombreDemande = 5;
     const nombreMatch = question.match(/(\d+)/);
     if (nombreMatch) {
-      nombreDemande = Math.min(parseInt(nombreMatch[1]), 10); // Maximum 10
-      console.log("Nombre demandé:", nombreDemande);
+      nombreDemande = Math.min(parseInt(nombreMatch[1]), 10);
+      console.log("🔢 Nombre demandé:", nombreDemande);
     }
     
-    // 2. Extraction et normalisation de la ville
+    // 2. Extraction de la ville
     const patterns = [
-      /(?:coworking|espace|bureau|travail).*?(?:à|in|at|near|près de|nearby|dans)\s+([^.!?,:;]+)/i,
-      /(?:à|in|at|near|près de|nearby|dans)\s+([^.!?,:;]+).*?(?:coworking|espace|bureau|travail)/i,
-      /(?:trouve|cherche|recherche).*?(?:à|in|at|near|près de|nearby|dans)\s+([^.!?,:;]+)/i,
-      /([a-zA-ZÀ-ÿ\s-]+)(?:\s+coworking|\s+espace|\s+bureau)/i
+      /(?:coworking|espace|bureau|travail|activité|activités|trucs?|faire|voir).*?(?:à|in|at|near|près de|nearby|dans)\s+([^.!?,:;]+)/i,
+      /(?:à|in|at|near|près de|nearby|dans)\s+([^.!?,:;]+).*?(?:coworking|espace|bureau|travail|activité|activités|trucs?|faire|voir)/i,
+      /(?:trouve|cherche|recherche).*?(?:à|in|at|near|près de|nearby|dans)\s+([^.!?,:;]+)/i
     ];
     
     let villeBrute = "";
@@ -93,130 +199,79 @@ exports.handler = async (event) => {
       }
     }
     
-    // Nettoyage de la ville
-    villeBrute = villeBrute
-      .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    
+    villeBrute = villeBrute.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "").replace(/\s+/g, " ").trim();
     const villeNormalisee = VILLE_NORMALISATION[villeBrute] || villeBrute;
     
-    console.log("Ville extraite:", villeBrute, "→ Normalisée:", villeNormalisee);
+    console.log("🌍 Ville extraite:", villeBrute, "→ Normalisée:", villeNormalisee);
     
     // 3. Détection du type de recherche
     const isCoworking = /coworking|espace|bureau|travail/i.test(question);
     const isActivite = /trucs?|activité|activités|voir|faire|visiter|restaurant|musée|attraction|château|bar|temple|guinness|choses|que faire|à faire/i.test(question);
     
-    let collectionName = 'coworking'; // Par défaut
+    let typeRecherche = 'coworking';
     let searchQuery = `coworking ${villeNormalisee || question}`;
     
     if (isActivite && !isCoworking) {
-      collectionName = 'activites'; // Nouvelle collection
+      typeRecherche = 'activites';
       searchQuery = `activités choses à faire ${villeNormalisee || question}`;
-      console.log("Recherche d'activités détectée pour:", question);
+      console.log("🎯 TYPE: Recherche d'activités détectée");
     } else {
-      console.log("Recherche de coworkings détectée pour:", question);
+      console.log("🏢 TYPE: Recherche de coworkings détectée");
     }
     
-    // 4. Recherche dans Firebase Firestore
+    // ======================================
+    // 4. RECHERCHE SELON LE TYPE
+    // ======================================
+    
     let firebaseData = [];
     let firebaseSuccess = false;
     
-    if (villeNormalisee && villeNormalisee.length > 2) {
-      try {
-        console.log("Recherche Firebase pour:", villeNormalisee, "dans", collectionName);
-        
-        // Référence à la collection (coworking ou activites)
-        const collectionRef = collection(db, collectionName);
-        
-        // Requête 1 : Recherche insensible à la casse - récupère tout et filtre
-        try {
-          const q1 = query(collectionRef, limit(50)); // Récupère plus pour filtrer
-          const querySnapshot1 = await getDocs(q1);
-          
-          querySnapshot1.forEach((doc) => {
-            const data = doc.data();
-            const visitLower = data.visit ? data.visit.toLowerCase() : '';
-            const nameLower = data.name ? data.name.toLowerCase() : '';
-            
-            // Recherche dans visit ET name, insensible à la casse
-            if (visitLower.includes(villeNormalisee.toLowerCase()) || 
-                nameLower.includes(villeNormalisee.toLowerCase()) ||
-                visitLower === villeNormalisee.toLowerCase()) {
-              firebaseData.push({ id: doc.id, ...data });
-            }
-          });
-          
-          // Limiter aux résultats demandés + marge
-          firebaseData = firebaseData.slice(0, nombreDemande + 3);
-          
-          console.log("Résultats recherche insensible à la casse:", firebaseData.length);
-        } catch (error1) {
-          console.log("Erreur recherche:", error1.message);
-        }
-        
-        // Plus besoin de requête 2 car la requête 1 gère déjà tout
-        if (firebaseData.length > 0) {
-          firebaseSuccess = true;
-          console.log("Succès Firebase - Résultats trouvés:", firebaseData.length);
-        }
-        
-      } catch (firebaseError) {
-        console.error("Erreur générale Firebase:", firebaseError.message);
-      }
+    if (typeRecherche === 'coworking') {
+      // SECTION COWORKINGS
+      const resultCoworking = await rechercheCoworkings(villeNormalisee, nombreDemande);
+      firebaseData = resultCoworking.firebaseData;
+      firebaseSuccess = resultCoworking.firebaseSuccess;
     } else {
-      console.log("Ville non détectée ou trop courte pour Firebase");
+      // SECTION ACTIVITÉS
+      const resultActivites = await rechercheActivites(villeNormalisee, nombreDemande);
+      firebaseData = resultActivites.firebaseData;
+      firebaseSuccess = resultActivites.firebaseSuccess;
     }
-
-    // 5. Logique hybride : Firebase + Internet pour le nombre demandé
+    
+    // ======================================
+    // 5. LOGIQUE HYBRIDE FIREBASE + INTERNET
+    // ======================================
+    
     let finalResults = [];
-    let firebaseCount = 0;
-    let internetCount = 0;
-    const MAX_RESULTS = nombreDemande;
+    let internetData = [];
     
     // Étape 5a : Ajouter les résultats Firebase
     if (firebaseSuccess && firebaseData.length > 0) {
-      firebaseCount = Math.min(firebaseData.length, MAX_RESULTS);
+      const firebaseCount = Math.min(firebaseData.length, nombreDemande);
       finalResults = firebaseData.slice(0, firebaseCount);
-      console.log(`Ajout de ${firebaseCount} résultats Firebase`);
+      console.log(`📊 Ajout de ${firebaseCount} résultats Firebase`);
     }
     
     // Étape 5b : Compléter avec Internet si besoin
-    let internetData = [];
-    if (finalResults.length < MAX_RESULTS) {
-      internetCount = MAX_RESULTS - finalResults.length;
-      console.log(`Recherche internet pour ${internetCount} résultats supplémentaires...`);
-      
-      const apiUrl = `https://serpapi.com/search?api_key=${SERPAPI_KEY}&engine=google&q=${encodeURIComponent(searchQuery)}&hl=fr&gl=fr`;
-      
-      try {
-        const apiResponse = await fetch(apiUrl);
-        const searchData = await apiResponse.json();
-        
-        if (searchData.organic_results?.length > 0) {
-          internetData = searchData.organic_results.slice(0, internetCount).map(result => ({
-            name: result.title,
-            visit: villeNormalisee || 'Adresse web',
-            date: 'Voir site',
-            link: result.link,
-            snippet: result.snippet,
-            source: 'internet'
-          }));
-          console.log(`Trouvé ${internetData.length} résultats internet`);
-        }
-      } catch (internetError) {
-        console.log("Erreur recherche internet:", internetError.message);
-      }
+    if (finalResults.length < nombreDemande) {
+      const internetCount = nombreDemande - finalResults.length;
+      internetData = await rechercheInternet(searchQuery, internetCount);
     }
     
-    // Étape 5c : Construire la réponse combinée
+    // ======================================
+    // 6. CONSTRUCTION DE LA RÉPONSE
+    // ======================================
+    
     if (finalResults.length > 0 || internetData.length > 0) {
       let combinedReply = "";
       
       // Section Firebase
       if (finalResults.length > 0) {
-        const titre = collectionName === 'activites' ? "🎯 **Activités de notre base partenaire:**" : "🏢 **Coworkings de notre base partenaire:**";
+        const titre = typeRecherche === 'activites' ? 
+          "🎯 **Activités de notre base partenaire:**" : 
+          "🏢 **Coworkings de notre base partenaire:**";
         combinedReply += titre + "\n\n";
+        
         finalResults.forEach((item, i) => {
           combinedReply += `${i+1}. **${item.name}**\n   📍 ${item.visit}\n   💰 ${item.date}\n   🔒 Partenaire exclusif\n\n`;
         });
@@ -224,8 +279,11 @@ exports.handler = async (event) => {
       
       // Section Internet
       if (internetData.length > 0) {
-        const titreInternet = collectionName === 'activites' ? "🌍 **Activités trouvées sur internet:**" : "🌍 **Coworkings trouvés sur internet:**";
+        const titreInternet = typeRecherche === 'activites' ? 
+          "🌍 **Activités trouvées sur internet:**" : 
+          "🌍 **Coworkings trouvés sur internet:**";
         combinedReply += titreInternet + "\n\n";
+        
         internetData.forEach((item, i) => {
           const num = finalResults.length + i + 1;
           combinedReply += `${num}. **${item.name}**\n   🔗 [Voir le site](${item.link})\n   📝 ${item.snippet ? item.snippet.substring(0, 100) + '...' : 'Plus d\'infos sur le site'}\n\n`;
@@ -233,7 +291,7 @@ exports.handler = async (event) => {
       }
       
       // Footer avec statistiques
-      const typeResultat = collectionName === 'activites' ? 'activité(s)' : 'coworking(s)';
+      const typeResultat = typeRecherche === 'activites' ? 'activité(s)' : 'coworking(s)';
       combinedReply += `📊 **Résultats**: ${finalResults.length} ${typeResultat} partenaire(s) + ${internetData.length} internet = ${finalResults.length + internetData.length} total\n`;
       combinedReply += `🔥 **Demandé**: ${nombreDemande} résultat(s) | **Source**: Firebase + Internet\n`;
       combinedReply += "💡 Notre base grandit chaque jour avec de nouveaux partenaires !";
@@ -241,18 +299,18 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers, body: JSON.stringify({ reponse: combinedReply }) };
     }
     
-    // 6. Si aucun résultat trouvé
-    const typeRecherche = collectionName === 'activites' ? 'activités' : 'coworkings';
+    // 7. Aucun résultat trouvé
+    const typeResultat = typeRecherche === 'activites' ? 'activités' : 'coworkings';
     return { 
       statusCode: 200, 
       headers, 
       body: JSON.stringify({ 
-        reponse: `❌ Aucun ${typeRecherche} trouvé pour cette recherche. Essayez avec une autre ville ou ajoutez plus de données à notre base !` 
+        reponse: `❌ Aucun ${typeResultat} trouvé pour cette recherche. Essayez avec une autre ville ou ajoutez plus de données à notre base !` 
       }) 
     };
     
   } catch (err) {
-    console.error('Erreur globale:', err);
+    console.error('❌ Erreur globale:', err);
     return { 
       statusCode: 500, 
       headers, 
