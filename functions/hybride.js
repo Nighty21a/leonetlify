@@ -105,7 +105,7 @@ exports.handler = async (event) => {
     
     // 3. Détection du type de recherche
     const isCoworking = /coworking|espace|bureau|travail/i.test(question);
-    const isActivite = /trucs?|activité|voir|faire|visiter|restaurant|musée|attraction|château|bar|temple|guinness|activités/i.test(question);
+    const isActivite = /trucs?|activité|activités|voir|faire|visiter|restaurant|musée|attraction|château|bar|temple|guinness|choses|que faire|à faire/i.test(question);
     
     let collectionName = 'coworking'; // Par défaut
     let searchQuery = `coworking ${villeNormalisee || question}`;
@@ -113,9 +113,9 @@ exports.handler = async (event) => {
     if (isActivite && !isCoworking) {
       collectionName = 'activites'; // Nouvelle collection
       searchQuery = `activités choses à faire ${villeNormalisee || question}`;
-      console.log("Recherche d'activités détectée");
+      console.log("Recherche d'activités détectée pour:", question);
     } else {
-      console.log("Recherche de coworkings détectée");
+      console.log("Recherche de coworkings détectée pour:", question);
     }
     
     // 4. Recherche dans Firebase Firestore
@@ -129,45 +129,33 @@ exports.handler = async (event) => {
         // Référence à la collection (coworking ou activites)
         const collectionRef = collection(db, collectionName);
         
-        // Requête 1 : Recherche exacte dans le champ 'visit'
+        // Requête 1 : Recherche insensible à la casse - récupère tout et filtre
         try {
-          const q1 = query(
-            collectionRef, 
-            where('visit', '==', villeNormalisee),
-            limit(nombreDemande + 2)
-          );
+          const q1 = query(collectionRef, limit(50)); // Récupère plus pour filtrer
           const querySnapshot1 = await getDocs(q1);
           
           querySnapshot1.forEach((doc) => {
-            firebaseData.push({ id: doc.id, ...doc.data() });
+            const data = doc.data();
+            const visitLower = data.visit ? data.visit.toLowerCase() : '';
+            const nameLower = data.name ? data.name.toLowerCase() : '';
+            
+            // Recherche dans visit ET name, insensible à la casse
+            if (visitLower.includes(villeNormalisee.toLowerCase()) || 
+                nameLower.includes(villeNormalisee.toLowerCase()) ||
+                visitLower === villeNormalisee.toLowerCase()) {
+              firebaseData.push({ id: doc.id, ...data });
+            }
           });
           
-          console.log("Résultats recherche exacte:", firebaseData.length);
+          // Limiter aux résultats demandés + marge
+          firebaseData = firebaseData.slice(0, nombreDemande + 3);
+          
+          console.log("Résultats recherche insensible à la casse:", firebaseData.length);
         } catch (error1) {
-          console.log("Erreur recherche exacte:", error1.message);
+          console.log("Erreur recherche:", error1.message);
         }
         
-        // Requête 2 : Si pas de résultats, recherche plus large
-        if (firebaseData.length === 0) {
-          try {
-            const q2 = query(collectionRef, limit(nombreDemande + 5));
-            const querySnapshot2 = await getDocs(q2);
-            
-            querySnapshot2.forEach((doc) => {
-              const data = doc.data();
-              // Filtrage côté client pour recherche partielle
-              if (data.visit && data.visit.toLowerCase().includes(villeNormalisee) ||
-                  data.name && data.name.toLowerCase().includes(villeNormalisee)) {
-                firebaseData.push({ id: doc.id, ...data });
-              }
-            });
-            
-            console.log("Résultats recherche large:", firebaseData.length);
-          } catch (error2) {
-            console.log("Erreur recherche large:", error2.message);
-          }
-        }
-        
+        // Plus besoin de requête 2 car la requête 1 gère déjà tout
         if (firebaseData.length > 0) {
           firebaseSuccess = true;
           console.log("Succès Firebase - Résultats trouvés:", firebaseData.length);
