@@ -2,7 +2,7 @@ const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 
 // Variables d'env. définies sur Netlify
-const SUPABASE_URL = 'https://jcbbuiowjrwteafkruio.supabase.co';
+const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const OPENAI_KEY  = process.env.OPENAI_API_KEY;
 
