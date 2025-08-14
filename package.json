@@ -1,9 +1,10 @@
 {
   "name": "leonetlify",
   "version": "1.0.0",
-  "description": "Assistant IA avec fonctions Netlify",
+  "description": "Assistant IA avec functions Netlify",
   "dependencies": {
     "node-fetch": "^2.7.0",
-    "@supabase/supabase-js": "^2.0.0"
+    "@supabase/supabase-js": "^2.0.0",
+    "firebase": "^10.0.0"
   }
 }
